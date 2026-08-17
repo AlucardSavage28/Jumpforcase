@@ -1,5 +1,5 @@
 -- ================================================
--- JUMP TAB (COLLECT JUMP + AUTO JUMP + PERFECT JUMP)
+-- JUMP TAB (WITH AUTO RETURN)
 -- ================================================
 repeat task.wait() until getgenv().Window
 local Window = getgenv().Window
@@ -9,8 +9,6 @@ local JumpTab = Window:CreateTab("Jump", nil)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
-local UserInputService = game:GetService("UserInputService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local remotes = ReplicatedStorage:FindFirstChild("Remotes")
 
@@ -33,76 +31,60 @@ local jumpSettings = settings.jump
 -- ======================================
 -- SETTINGS
 -- ======================================
-local autoJumpEnabled = jumpSettings.autoJump or false
-local autoJumpThread = nil
-local jumpInterval = jumpSettings.jumpInterval or 1
-
-local perfectJumpEnabled = jumpSettings.perfectJump or false
-local perfectJumpThread = nil
-
+local autoKickEnabled = jumpSettings.autoKick or false
+local autoKickThread = nil
+local autoReturnEnabled = jumpSettings.autoReturn or false
+local autoReturnThread = nil
+local fullAutoEnabled = jumpSettings.fullAuto or false
+local fullAutoThread = nil
 local collectJumpEnabled = jumpSettings.collectJump or false
 local collectJumpThread = nil
 
 -- ======================================
 -- FUNCTIONS
 -- ======================================
-local function getRoot()
-    local char = player.Character
-    if char then return char:FindFirstChild("HumanoidRootPart") end
+local function startKick()
+    fire("RequestKick", {
+        ["action"] = "charge"
+    })
 end
 
-local function getHumanoid()
-    local char = player.Character
-    if char then return char:FindFirstChild("Humanoid") end
+local function perfectKick()
+    fire("RequestKick", {
+        ["tier"] = "Perfect"
+    })
 end
 
-local function doJump()
-    local humanoid = getHumanoid()
-    if humanoid then
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-    end
+local function autoReturn()
+    fire("RequestAutoReturn")
 end
 
 local function collectJump()
     fire("PlayCollectJump")
 end
 
-local function isGrounded()
-    local humanoid = getHumanoid()
-    if humanoid then
-        return humanoid.FloorMaterial ~= Enum.Material.Air
+local function boostKick()
+    fire("BoostKick")
+end
+
+local function getRoot()
+    local char = player.Character
+    if char then return char:FindFirstChild("HumanoidRootPart") end
+end
+
+local function isInKickZone()
+    local root = getRoot()
+    if root then
+        local zones = workspace:FindFirstChild("Zones")
+        if zones then
+            local kickZone = zones:FindFirstChild("KickZone")
+            if kickZone and kickZone:IsA("BasePart") then
+                local distance = (root.Position - kickZone.Position).Magnitude
+                return distance < kickZone.Size.Magnitude
+            end
+        end
     end
     return false
-end
-
-local function getJumpPower()
-    local humanoid = getHumanoid()
-    if humanoid then
-        return humanoid.JumpPower
-    end
-    return 0
-end
-
-local function setJumpPower(power)
-    local humanoid = getHumanoid()
-    if humanoid then
-        humanoid.JumpPower = power
-    end
-end
-
-local function getWalkSpeed()
-    local humanoid = getHumanoid()
-    if humanoid then
-        return humanoid.WalkSpeed
-    end
-    return 0
-end
-
-local function setWalkSpeed(speed)
-    local humanoid = getHumanoid()
-    if humanoid then
-        humanoid.WalkSpeed = speed
-    end
 end
 
 -- ======================================
@@ -114,8 +96,6 @@ JumpTab:CreateButton({
     Name = "Collect Jump Once",
     Callback = function()
         collectJump()
-        getgenv().ActivityStatus.current = "Collecting Jump"
-        getgenv().ActivityStatus.trigger = true
         print("[Jump] Collected jump")
     end
 })
@@ -142,149 +122,163 @@ JumpTab:CreateToggle({
 })
 
 -- ======================================
--- UI - AUTO JUMP
+-- UI - AUTO KICK
 -- ======================================
-JumpTab:CreateSection("Auto Jump")
+JumpTab:CreateSection("Auto Kick")
 
-JumpTab:CreateInput({
-    Name = "Jump Interval (seconds)",
-    CurrentValue = tostring(jumpInterval),
-    PlaceholderText = "1",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(v)
-        local n = tonumber(v)
-        if n then
-            jumpInterval = math.max(0.1, n)
-            jumpSettings.jumpInterval = jumpInterval
-            getgenv().HubSettings.jump = jumpSettings
-            saveHubSettings()
-        end
-    end
-})
-
-JumpTab:CreateToggle({
-    Name = "Auto Jump",
-    CurrentValue = autoJumpEnabled,
-    Callback = function(v)
-        autoJumpEnabled = v
-        jumpSettings.autoJump = v
-        getgenv().HubSettings.jump = jumpSettings
-        saveHubSettings()
-        if v then
-            autoJumpThread = task.spawn(function()
-                while autoJumpEnabled do
-                    doJump()
-                    task.wait(jumpInterval)
-                end
-            end)
-        else
-            if autoJumpThread then task.cancel(autoJumpThread) end
-        end
-    end
-})
-
--- ======================================
--- UI - PERFECT JUMP
--- ======================================
-JumpTab:CreateSection("Perfect Jump")
-
-JumpTab:CreateLabel("Jumps only when grounded (perfect timing)")
-
-JumpTab:CreateToggle({
-    Name = "Auto Perfect Jump",
-    CurrentValue = perfectJumpEnabled,
-    Callback = function(v)
-        perfectJumpEnabled = v
-        jumpSettings.perfectJump = v
-        getgenv().HubSettings.jump = jumpSettings
-        saveHubSettings()
-        if v then
-            perfectJumpThread = task.spawn(function()
-                while perfectJumpEnabled do
-                    if isGrounded() then
-                        doJump()
-                    end
-                    task.wait(0.1)
-                end
-            end)
-        else
-            if perfectJumpThread then task.cancel(perfectJumpThread) end
-        end
-    end
-})
-
--- ======================================
--- UI - JUMP ENHANCEMENT
--- ======================================
-JumpTab:CreateSection("Jump Enhancement")
-
-local originalJumpPower = getJumpPower()
-local originalWalkSpeed = getWalkSpeed()
-
-JumpTab:CreateInput({
-    Name = "Jump Power (0 = reset)",
-    CurrentValue = tostring(originalJumpPower),
-    PlaceholderText = "50",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(v)
-        local n = tonumber(v)
-        if n then
-            if n == 0 then
-                setJumpPower(originalJumpPower)
-                print("[Jump] Jump power reset to: " .. originalJumpPower)
-            else
-                setJumpPower(n)
-                print("[Jump] Jump power set to: " .. n)
-            end
-        end
-    end
-})
-
-JumpTab:CreateInput({
-    Name = "Walk Speed (0 = reset)",
-    CurrentValue = tostring(originalWalkSpeed),
-    PlaceholderText = "16",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(v)
-        local n = tonumber(v)
-        if n then
-            if n == 0 then
-                setWalkSpeed(originalWalkSpeed)
-                print("[Jump] Walk speed reset to: " .. originalWalkSpeed)
-            else
-                setWalkSpeed(n)
-                print("[Jump] Walk speed set to: " .. n)
-            end
-        end
+JumpTab:CreateButton({
+    Name = "Start Kick (Charge)",
+    Callback = function()
+        startKick()
+        print("[Jump] Kick charged")
     end
 })
 
 JumpTab:CreateButton({
-    Name = "Reset Jump + Speed",
+    Name = "Perfect Kick",
     Callback = function()
-        setJumpPower(originalJumpPower)
-        setWalkSpeed(originalWalkSpeed)
-        getgenv().ActivityStatus.current = "Jump + Speed Reset"
-        getgenv().ActivityStatus.trigger = true
-        print("[Jump] Reset jump power and walk speed")
+        perfectKick()
+        print("[Jump] Perfect kick sent")
+    end
+})
+
+JumpTab:CreateToggle({
+    Name = "Auto Kick (Charge + Perfect)",
+    CurrentValue = autoKickEnabled,
+    Callback = function(v)
+        autoKickEnabled = v
+        jumpSettings.autoKick = v
+        getgenv().HubSettings.jump = jumpSettings
+        saveHubSettings()
+        if v then
+            autoKickThread = task.spawn(function()
+                while autoKickEnabled do
+                    startKick()
+                    task.wait(1.1)
+                    perfectKick()
+                    getgenv().ActivityStatus.current = "Auto Kick - Perfect!"
+                    getgenv().ActivityStatus.trigger = true
+                    task.wait(2)
+                end
+            end)
+        else
+            if autoKickThread then task.cancel(autoKickThread) end
+        end
     end
 })
 
 -- ======================================
--- UI - STATUS
+-- UI - AUTO RETURN
 -- ======================================
-JumpTab:CreateSection("Status")
+JumpTab:CreateSection("Auto Return")
 
-local jumpStatusLabel = JumpTab:CreateLabel("Jump Power: " .. getJumpPower())
-local speedStatusLabel = JumpTab:CreateLabel("Walk Speed: " .. getWalkSpeed())
-
-task.spawn(function()
-    while true do
-        task.wait(2)
-        pcall(function() jumpStatusLabel:SetText("Jump Power: " .. getJumpPower()) end)
-        pcall(function() speedStatusLabel:SetText("Walk Speed: " .. getWalkSpeed()) end)
+JumpTab:CreateButton({
+    Name = "Return to Safe Zone",
+    Callback = function()
+        autoReturn()
+        getgenv().ActivityStatus.current = "Returning to safe zone"
+        getgenv().ActivityStatus.trigger = true
+        print("[Jump] Auto return sent")
     end
-end)
+})
+
+JumpTab:CreateToggle({
+    Name = "Auto Return After Landing",
+    CurrentValue = autoReturnEnabled,
+    Callback = function(v)
+        autoReturnEnabled = v
+        jumpSettings.autoReturn = v
+        getgenv().HubSettings.jump = jumpSettings
+        saveHubSettings()
+        if v then
+            autoReturnThread = task.spawn(function()
+                while autoReturnEnabled do
+                    -- Check if not in kick zone (meaning we're out in the field)
+                    if not isInKickZone() then
+                        autoReturn()
+                        getgenv().ActivityStatus.current = "Returning to safe zone"
+                        getgenv().ActivityStatus.trigger = true
+                    end
+                    task.wait(3)
+                end
+            end)
+        else
+            if autoReturnThread then task.cancel(autoReturnThread) end
+        end
+    end
+})
+
+-- ======================================
+-- UI - FULL AUTO (KICK + RETURN LOOP)
+-- ======================================
+JumpTab:CreateSection("Full Auto")
+
+JumpTab:CreateLabel("Auto Kick → Fly → Land → Return → Repeat")
+
+JumpTab:CreateToggle({
+    Name = "Full Auto Jump Loop",
+    CurrentValue = fullAutoEnabled,
+    Callback = function(v)
+        fullAutoEnabled = v
+        jumpSettings.fullAuto = v
+        getgenv().HubSettings.jump = jumpSettings
+        saveHubSettings()
+        if v then
+            fullAutoThread = task.spawn(function()
+                while fullAutoEnabled do
+                    -- Check if in kick zone
+                    if isInKickZone() then
+                        getgenv().ActivityStatus.current = "Starting Kick..."
+                        getgenv().ActivityStatus.trigger = true
+                        startKick()
+                        task.wait(1.1)
+                        perfectKick()
+                        task.wait(5) -- Wait for flight
+                    else
+                        getgenv().ActivityStatus.current = "Returning to safe zone..."
+                        getgenv().ActivityStatus.trigger = true
+                        autoReturn()
+                        task.wait(2)
+                    end
+                    task.wait(1)
+                end
+            end)
+        else
+            if fullAutoThread then task.cancel(fullAutoThread) end
+        end
+    end
+})
+
+-- ======================================
+-- UI - BOOST
+-- ======================================
+JumpTab:CreateSection("Boost")
+
+JumpTab:CreateButton({
+    Name = "Boost Once",
+    Callback = function()
+        boostKick()
+        print("[Jump] Boosted")
+    end
+})
+
+JumpTab:CreateToggle({
+    Name = "Auto Boost (During Flight)",
+    CurrentValue = jumpSettings.autoBoost or false,
+    Callback = function(v)
+        jumpSettings.autoBoost = v
+        getgenv().HubSettings.jump = jumpSettings
+        saveHubSettings()
+        if v then
+            task.spawn(function()
+                while v do
+                    boostKick()
+                    task.wait(0.1)
+                end
+            end)
+        end
+    end
+})
 
 -- ======================================
 -- AUTO-START SAVED TOGGLES
@@ -298,22 +292,41 @@ if collectJumpEnabled then
     end)
 end
 
-if autoJumpEnabled then
-    autoJumpThread = task.spawn(function()
-        while autoJumpEnabled do
-            doJump()
-            task.wait(jumpInterval)
+if autoKickEnabled then
+    autoKickThread = task.spawn(function()
+        while autoKickEnabled do
+            startKick()
+            task.wait(1.1)
+            perfectKick()
+            task.wait(2)
         end
     end)
 end
 
-if perfectJumpEnabled then
-    perfectJumpThread = task.spawn(function()
-        while perfectJumpEnabled do
-            if isGrounded() then
-                doJump()
+if autoReturnEnabled then
+    autoReturnThread = task.spawn(function()
+        while autoReturnEnabled do
+            if not isInKickZone() then
+                autoReturn()
             end
-            task.wait(0.1)
+            task.wait(3)
+        end
+    end)
+end
+
+if fullAutoEnabled then
+    fullAutoThread = task.spawn(function()
+        while fullAutoEnabled do
+            if isInKickZone() then
+                startKick()
+                task.wait(1.1)
+                perfectKick()
+                task.wait(5)
+            else
+                autoReturn()
+                task.wait(2)
+            end
+            task.wait(1)
         end
     end)
 end
