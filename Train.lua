@@ -1,5 +1,5 @@
 -- ================================================
--- TRAIN TAB (FIXED REMOTE ARGUMENTS)
+-- TRAIN TAB (SIMPLIFIED - EQUIP + AUTO CLICK 2X)
 -- ================================================
 repeat task.wait() until getgenv().Window
 local Window = getgenv().Window
@@ -9,6 +9,7 @@ local TrainTab = Window:CreateTab("Train", nil)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local remotes = ReplicatedStorage:FindFirstChild("Remotes")
 
@@ -47,31 +48,18 @@ end
 -- SETTINGS
 -- ======================================
 local selectedWeight = trainSettings.selectedWeight or "Wooden Stick"
-local autoBuyEnabled = trainSettings.autoBuy or false
-local autoBuyThread = nil
-local autoEquipBestEnabled = trainSettings.autoEquipBest or false
-local autoEquipBestThread = nil
+local autoEquipEnabled = trainSettings.autoEquip or false
+local autoEquipThread = nil
+local autoClick2XEnabled = trainSettings.autoClick2X or false
+local autoClick2XThread = nil
 
 -- ======================================
--- FUNCTIONS (CORRECT FORMATS)
+-- FUNCTIONS
 -- ======================================
-local function buyWeight(weightName)
-    fire("RequestBuyWeight", {
-        ["key"] = weightName
-    })
-end
-
 local function equipWeight(weightName)
     fire("RequestEquipWeight", {
         ["key"] = weightName
     })
-end
-
-local function buyAllWeights()
-    for _, weightName in ipairs(weightList) do
-        buyWeight(weightName)
-        task.wait(0.2)
-    end
 end
 
 local function getEquippedWeight()
@@ -105,19 +93,52 @@ local function getEquippedWeight()
     return "Unknown"
 end
 
-local function getWeightIndex(weightName)
-    for i, name in ipairs(weightList) do
-        if name == weightName then
-            return i
+local function find2XButton()
+    local playerGui = player:FindFirstChild("PlayerGui")
+    if playerGui then
+        for _, button in ipairs(playerGui:GetDescendants()) do
+            if button:IsA("ImageButton") or button:IsA("TextButton") then
+                -- Look for 2x or X2 button
+                local buttonText = ""
+                for _, desc in ipairs(button:GetDescendants()) do
+                    if desc:IsA("TextLabel") and desc.Text ~= "" then
+                        buttonText = buttonText .. " " .. desc.Text
+                    end
+                end
+                
+                if buttonText:find("2") or buttonText:find("X2") or buttonText:find("x2") then
+                    return button
+                end
+            end
         end
     end
-    return 0
+    return nil
+end
+
+local function click2XButton()
+    local button = find2XButton()
+    if button then
+        -- Try firing Activated
+        firesignal(button.Activated)
+        return true
+    end
+    
+    -- Fallback: Try clicking at screen position
+    -- The 2x button is usually on the right side of screen
+    local camera = workspace.CurrentCamera
+    if camera then
+        local viewportSize = camera.ViewportSize
+        -- Try clicking at various positions where 2x might be
+        VirtualInputManager:SendMouseButtonEvent(viewportSize.X * 0.7, viewportSize.Y * 0.3, 0, true, game, 1)
+        VirtualInputManager:SendMouseButtonEvent(viewportSize.X * 0.7, viewportSize.Y * 0.3, 0, false, game, 1)
+    end
+    return false
 end
 
 -- ======================================
--- UI - WEIGHT SHOP
+-- UI - EQUIP WEIGHT
 -- ======================================
-TrainTab:CreateSection("Weight Shop")
+TrainTab:CreateSection("Equip Weight")
 
 TrainTab:CreateDropdown({
     Name = "Select Weight",
@@ -132,17 +153,7 @@ TrainTab:CreateDropdown({
 })
 
 TrainTab:CreateButton({
-    Name = "Buy Weight",
-    Callback = function()
-        buyWeight(selectedWeight)
-        getgenv().ActivityStatus.current = "Buying " .. selectedWeight
-        getgenv().ActivityStatus.trigger = true
-        print("[Train] Bought: " .. selectedWeight)
-    end
-})
-
-TrainTab:CreateButton({
-    Name = "Equip Weight",
+    Name = "Equip Weight Once",
     Callback = function()
         equipWeight(selectedWeight)
         getgenv().ActivityStatus.current = "Equipping " .. selectedWeight
@@ -151,95 +162,73 @@ TrainTab:CreateButton({
     end
 })
 
-TrainTab:CreateButton({
-    Name = "Buy All Weights",
-    Callback = function()
-        buyAllWeights()
-        getgenv().ActivityStatus.current = "Buying All Weights"
-        getgenv().ActivityStatus.trigger = true
-        print("[Train] Buying all weights")
-    end
-})
-
 TrainTab:CreateToggle({
-    Name = "Auto Buy All Weights",
-    CurrentValue = autoBuyEnabled,
+    Name = "Auto Equip (Keep Training)",
+    CurrentValue = autoEquipEnabled,
     Callback = function(v)
-        autoBuyEnabled = v
-        trainSettings.autoBuy = v
+        autoEquipEnabled = v
+        trainSettings.autoEquip = v
         getgenv().HubSettings.train = trainSettings
         saveHubSettings()
         if v then
-            autoBuyThread = task.spawn(function()
-                while autoBuyEnabled do
-                    buyAllWeights()
-                    getgenv().ActivityStatus.current = "Auto Buying All Weights"
-                    getgenv().ActivityStatus.trigger = true
-                    task.wait(30)
+            autoEquipThread = task.spawn(function()
+                local wasActive = false
+                while autoEquipEnabled do
+                    local currentWeight = getEquippedWeight()
+                    
+                    if currentWeight ~= selectedWeight then
+                        equipWeight(selectedWeight)
+                        
+                        if not wasActive then
+                            getgenv().ActivityStatus.current = "Training with " .. selectedWeight
+                            getgenv().ActivityStatus.trigger = true
+                            wasActive = true
+                        end
+                    end
+                    
+                    task.wait(5)
                 end
             end)
         else
-            if autoBuyThread then task.cancel(autoBuyThread) end
+            if autoEquipThread then task.cancel(autoEquipThread) end
         end
     end
 })
 
 -- ======================================
--- UI - AUTO EQUIP BEST
+-- UI - AUTO CLICK 2X
 -- ======================================
-TrainTab:CreateSection("Auto Training")
+TrainTab:CreateSection("Auto Click 2X")
+
+TrainTab:CreateLabel("Automatically clicks the 2x button when it appears")
 
 TrainTab:CreateToggle({
-    Name = "Auto Equip Best Weight",
-    CurrentValue = autoEquipBestEnabled,
+    Name = "Auto Click 2X Button",
+    CurrentValue = autoClick2XEnabled,
     Callback = function(v)
-        autoEquipBestEnabled = v
-        trainSettings.autoEquipBest = v
+        autoClick2XEnabled = v
+        trainSettings.autoClick2X = v
         getgenv().HubSettings.train = trainSettings
         saveHubSettings()
         if v then
-            autoEquipBestThread = task.spawn(function()
-                local wasActive = false
-                while autoEquipBestEnabled do
-                    local currentWeight = getEquippedWeight()
-                    local currentIndex = getWeightIndex(currentWeight)
+            autoClick2XThread = task.spawn(function()
+                local clickCount = 0
+                while autoClick2XEnabled do
+                    local clicked = click2XButton()
                     
-                    -- Check if there's a better weight to equip
-                    local bestWeight = nil
-                    for i = #weightList, 1, -1 do
-                        if i > currentIndex then
-                            bestWeight = weightList[i]
-                            break
+                    if clicked then
+                        clickCount = clickCount + 1
+                        if clickCount == 1 then
+                            getgenv().ActivityStatus.current = "Auto Clicking 2X Button"
+                            getgenv().ActivityStatus.trigger = true
                         end
                     end
                     
-                    if bestWeight then
-                        -- Buy first then equip
-                        buyWeight(bestWeight)
-                        task.wait(0.5)
-                        equipWeight(bestWeight)
-                        
-                        if not wasActive then
-                            getgenv().ActivityStatus.current = "Equipping Best Weight: " .. bestWeight
-                            getgenv().ActivityStatus.trigger = true
-                            wasActive = true
-                        end
-                        
-                        print("[Train] Upgraded to: " .. bestWeight)
-                    else
-                        -- Already have best weight equipped
-                        if not wasActive then
-                            getgenv().ActivityStatus.current = "Using best weight: " .. currentWeight
-                            getgenv().ActivityStatus.trigger = true
-                            wasActive = true
-                        end
-                    end
-                    
-                    task.wait(10)
+                    task.wait(0.5)
                 end
             end)
         else
-            if autoEquipBestThread then task.cancel(autoEquipBestThread) end
+            if autoClick2XThread then task.cancel(autoClick2XThread) end
         end
     end
 })
@@ -262,32 +251,23 @@ end)
 -- ======================================
 -- AUTO-START SAVED TOGGLES
 -- ======================================
-if autoBuyEnabled then
-    autoBuyThread = task.spawn(function()
-        while autoBuyEnabled do
-            buyAllWeights()
-            task.wait(30)
+if autoEquipEnabled then
+    autoEquipThread = task.spawn(function()
+        while autoEquipEnabled do
+            local currentWeight = getEquippedWeight()
+            if currentWeight ~= selectedWeight then
+                equipWeight(selectedWeight)
+            end
+            task.wait(5)
         end
     end)
 end
 
-if autoEquipBestEnabled then
-    autoEquipBestThread = task.spawn(function()
-        while autoEquipBestEnabled do
-            local currentWeight = getEquippedWeight()
-            local currentIndex = getWeightIndex(currentWeight)
-            
-            for i = #weightList, 1, -1 do
-                if i > currentIndex then
-                    local bestWeight = weightList[i]
-                    buyWeight(bestWeight)
-                    task.wait(0.5)
-                    equipWeight(bestWeight)
-                    break
-                end
-            end
-            
-            task.wait(10)
+if autoClick2XEnabled then
+    autoClick2XThread = task.spawn(function()
+        while autoClick2XEnabled do
+            click2XButton()
+            task.wait(0.5)
         end
     end)
 end
