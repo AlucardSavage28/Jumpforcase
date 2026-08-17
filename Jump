@@ -1,0 +1,321 @@
+-- ================================================
+-- JUMP TAB (COLLECT JUMP + AUTO JUMP + PERFECT JUMP)
+-- ================================================
+repeat task.wait() until getgenv().Window
+local Window = getgenv().Window
+
+local JumpTab = Window:CreateTab("Jump", nil)
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+
+local function fire(name, ...)
+    if remotes then
+        local remote = remotes:FindFirstChild(name)
+        if remote and remote:IsA("RemoteEvent") then
+            remote:FireServer(...)
+        end
+    end
+end
+
+-- ======================================
+-- LOAD SAVED SETTINGS
+-- ======================================
+local settings = getgenv().HubSettings or {}
+if not settings.jump then settings.jump = {} end
+local jumpSettings = settings.jump
+
+-- ======================================
+-- SETTINGS
+-- ======================================
+local autoJumpEnabled = jumpSettings.autoJump or false
+local autoJumpThread = nil
+local jumpInterval = jumpSettings.jumpInterval or 1
+
+local perfectJumpEnabled = jumpSettings.perfectJump or false
+local perfectJumpThread = nil
+
+local collectJumpEnabled = jumpSettings.collectJump or false
+local collectJumpThread = nil
+
+-- ======================================
+-- FUNCTIONS
+-- ======================================
+local function getRoot()
+    local char = player.Character
+    if char then return char:FindFirstChild("HumanoidRootPart") end
+end
+
+local function getHumanoid()
+    local char = player.Character
+    if char then return char:FindFirstChild("Humanoid") end
+end
+
+local function doJump()
+    local humanoid = getHumanoid()
+    if humanoid then
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end
+
+local function collectJump()
+    fire("PlayCollectJump")
+end
+
+local function isGrounded()
+    local humanoid = getHumanoid()
+    if humanoid then
+        return humanoid.FloorMaterial ~= Enum.Material.Air
+    end
+    return false
+end
+
+local function getJumpPower()
+    local humanoid = getHumanoid()
+    if humanoid then
+        return humanoid.JumpPower
+    end
+    return 0
+end
+
+local function setJumpPower(power)
+    local humanoid = getHumanoid()
+    if humanoid then
+        humanoid.JumpPower = power
+    end
+end
+
+local function getWalkSpeed()
+    local humanoid = getHumanoid()
+    if humanoid then
+        return humanoid.WalkSpeed
+    end
+    return 0
+end
+
+local function setWalkSpeed(speed)
+    local humanoid = getHumanoid()
+    if humanoid then
+        humanoid.WalkSpeed = speed
+    end
+end
+
+-- ======================================
+-- UI - COLLECT JUMP
+-- ======================================
+JumpTab:CreateSection("Collect Jump")
+
+JumpTab:CreateButton({
+    Name = "Collect Jump Once",
+    Callback = function()
+        collectJump()
+        getgenv().ActivityStatus.current = "Collecting Jump"
+        getgenv().ActivityStatus.trigger = true
+        print("[Jump] Collected jump")
+    end
+})
+
+JumpTab:CreateToggle({
+    Name = "Auto Collect Jump",
+    CurrentValue = collectJumpEnabled,
+    Callback = function(v)
+        collectJumpEnabled = v
+        jumpSettings.collectJump = v
+        getgenv().HubSettings.jump = jumpSettings
+        saveHubSettings()
+        if v then
+            collectJumpThread = task.spawn(function()
+                while collectJumpEnabled do
+                    collectJump()
+                    task.wait(0.5)
+                end
+            end)
+        else
+            if collectJumpThread then task.cancel(collectJumpThread) end
+        end
+    end
+})
+
+-- ======================================
+-- UI - AUTO JUMP
+-- ======================================
+JumpTab:CreateSection("Auto Jump")
+
+JumpTab:CreateInput({
+    Name = "Jump Interval (seconds)",
+    CurrentValue = tostring(jumpInterval),
+    PlaceholderText = "1",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(v)
+        local n = tonumber(v)
+        if n then
+            jumpInterval = math.max(0.1, n)
+            jumpSettings.jumpInterval = jumpInterval
+            getgenv().HubSettings.jump = jumpSettings
+            saveHubSettings()
+        end
+    end
+})
+
+JumpTab:CreateToggle({
+    Name = "Auto Jump",
+    CurrentValue = autoJumpEnabled,
+    Callback = function(v)
+        autoJumpEnabled = v
+        jumpSettings.autoJump = v
+        getgenv().HubSettings.jump = jumpSettings
+        saveHubSettings()
+        if v then
+            autoJumpThread = task.spawn(function()
+                while autoJumpEnabled do
+                    doJump()
+                    task.wait(jumpInterval)
+                end
+            end)
+        else
+            if autoJumpThread then task.cancel(autoJumpThread) end
+        end
+    end
+})
+
+-- ======================================
+-- UI - PERFECT JUMP
+-- ======================================
+JumpTab:CreateSection("Perfect Jump")
+
+JumpTab:CreateLabel("Jumps only when grounded (perfect timing)")
+
+JumpTab:CreateToggle({
+    Name = "Auto Perfect Jump",
+    CurrentValue = perfectJumpEnabled,
+    Callback = function(v)
+        perfectJumpEnabled = v
+        jumpSettings.perfectJump = v
+        getgenv().HubSettings.jump = jumpSettings
+        saveHubSettings()
+        if v then
+            perfectJumpThread = task.spawn(function()
+                while perfectJumpEnabled do
+                    if isGrounded() then
+                        doJump()
+                    end
+                    task.wait(0.1)
+                end
+            end)
+        else
+            if perfectJumpThread then task.cancel(perfectJumpThread) end
+        end
+    end
+})
+
+-- ======================================
+-- UI - JUMP ENHANCEMENT
+-- ======================================
+JumpTab:CreateSection("Jump Enhancement")
+
+local originalJumpPower = getJumpPower()
+local originalWalkSpeed = getWalkSpeed()
+
+JumpTab:CreateInput({
+    Name = "Jump Power (0 = reset)",
+    CurrentValue = tostring(originalJumpPower),
+    PlaceholderText = "50",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(v)
+        local n = tonumber(v)
+        if n then
+            if n == 0 then
+                setJumpPower(originalJumpPower)
+                print("[Jump] Jump power reset to: " .. originalJumpPower)
+            else
+                setJumpPower(n)
+                print("[Jump] Jump power set to: " .. n)
+            end
+        end
+    end
+})
+
+JumpTab:CreateInput({
+    Name = "Walk Speed (0 = reset)",
+    CurrentValue = tostring(originalWalkSpeed),
+    PlaceholderText = "16",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(v)
+        local n = tonumber(v)
+        if n then
+            if n == 0 then
+                setWalkSpeed(originalWalkSpeed)
+                print("[Jump] Walk speed reset to: " .. originalWalkSpeed)
+            else
+                setWalkSpeed(n)
+                print("[Jump] Walk speed set to: " .. n)
+            end
+        end
+    end
+})
+
+JumpTab:CreateButton({
+    Name = "Reset Jump + Speed",
+    Callback = function()
+        setJumpPower(originalJumpPower)
+        setWalkSpeed(originalWalkSpeed)
+        getgenv().ActivityStatus.current = "Jump + Speed Reset"
+        getgenv().ActivityStatus.trigger = true
+        print("[Jump] Reset jump power and walk speed")
+    end
+})
+
+-- ======================================
+-- UI - STATUS
+-- ======================================
+JumpTab:CreateSection("Status")
+
+local jumpStatusLabel = JumpTab:CreateLabel("Jump Power: " .. getJumpPower())
+local speedStatusLabel = JumpTab:CreateLabel("Walk Speed: " .. getWalkSpeed())
+
+task.spawn(function()
+    while true do
+        task.wait(2)
+        pcall(function() jumpStatusLabel:SetText("Jump Power: " .. getJumpPower()) end)
+        pcall(function() speedStatusLabel:SetText("Walk Speed: " .. getWalkSpeed()) end)
+    end
+end)
+
+-- ======================================
+-- AUTO-START SAVED TOGGLES
+-- ======================================
+if collectJumpEnabled then
+    collectJumpThread = task.spawn(function()
+        while collectJumpEnabled do
+            collectJump()
+            task.wait(0.5)
+        end
+    end)
+end
+
+if autoJumpEnabled then
+    autoJumpThread = task.spawn(function()
+        while autoJumpEnabled do
+            doJump()
+            task.wait(jumpInterval)
+        end
+    end)
+end
+
+if perfectJumpEnabled then
+    perfectJumpThread = task.spawn(function()
+        while perfectJumpEnabled do
+            if isGrounded() then
+                doJump()
+            end
+            task.wait(0.1)
+        end
+    end)
+end
+
+print("[Jump] Loaded!")
